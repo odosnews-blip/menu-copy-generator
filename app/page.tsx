@@ -4,8 +4,6 @@ import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 
 interface BrandSettings {
-  apiKey: string;
-  openaiKey: string;
   storeName: string;
   type: string;
   tone: string;
@@ -20,35 +18,20 @@ interface ItemForm {
   price: string;
 }
 
-interface SocialPosts {
-  ig: string;
-  fb: string;
-}
+interface SocialPosts { ig: string; fb: string; }
+interface LangEntry { name: string; description: string; price: string; }
+interface Translations { en?: LangEntry; ja?: LangEntry; ko?: LangEntry; th?: LangEntry; }
 
-interface LangEntry {
-  name: string;
-  description: string;
-  price: string;
-}
-
-interface Translations {
-  en?: LangEntry;
-  ja?: LangEntry;
-  ko?: LangEntry;
-  th?: LangEntry;
-}
-
-const defaultBrand: BrandSettings = {
-  apiKey: "", openaiKey: "", storeName: "", type: "",
-  tone: "", audience: "", forbidden: "", examples: "",
-};
+const defaultBrand: BrandSettings = { storeName: "", type: "", tone: "", audience: "", forbidden: "", examples: "" };
 const defaultItem: ItemForm = { name: "", keywords: "", price: "" };
-
-const LANG_LABELS: Record<string, string> = {
-  en: "English", ja: "日本語", ko: "한국어", th: "ภาษาไทย",
-};
+const LANG_LABELS: Record<string, string> = { en: "English", ja: "日本語", ko: "한국어", th: "ภาษาไทย" };
 
 export default function Home() {
+  const [licenseKey, setLicenseKey] = useState("");
+  const [licenseInput, setLicenseInput] = useState("");
+  const [licenseError, setLicenseError] = useState("");
+  const [licenseLoading, setLicenseLoading] = useState(false);
+
   const [brand, setBrand] = useState<BrandSettings>(defaultBrand);
   const [item, setItem] = useState<ItemForm>(defaultItem);
   const [copies, setCopies] = useState<string[]>([]);
@@ -71,83 +54,80 @@ export default function Home() {
   const [showBrand, setShowBrand] = useState(true);
   const [activeTab, setActiveTab] = useState<"ig" | "fb">("ig");
   const [activeLang, setActiveLang] = useState<"en" | "ja" | "ko" | "th">("en");
-
   const pdfRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem("menu-brand-settings-v2");
-    if (saved) { setBrand(JSON.parse(saved)); setShowBrand(false); }
+    const saved = localStorage.getItem("menu-license-key");
+    if (saved) setLicenseKey(saved);
+    const savedBrand = localStorage.getItem("menu-brand-settings-v3");
+    if (savedBrand) { setBrand(JSON.parse(savedBrand)); setShowBrand(false); }
   }, []);
 
+  const handleLicenseSubmit = async () => {
+    if (!licenseInput.trim()) { setLicenseError("請輸入授權碼"); return; }
+    setLicenseLoading(true); setLicenseError("");
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ licenseKey: licenseInput.trim() }),
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
+      setLicenseKey(licenseInput.trim());
+      localStorage.setItem("menu-license-key", licenseInput.trim());
+    } catch (e: unknown) {
+      setLicenseError(e instanceof Error ? e.message : "驗證失敗");
+    } finally { setLicenseLoading(false); }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("menu-license-key");
+    setLicenseKey(""); setLicenseInput("");
+    setCopies([]); setImageUrl(""); setSocial(null); setTranslations(null);
+  };
+
   const saveBrand = () => {
-    localStorage.setItem("menu-brand-settings-v2", JSON.stringify(brand));
+    localStorage.setItem("menu-brand-settings-v3", JSON.stringify(brand));
     setShowBrand(false);
   };
 
+  const callApi = async (path: string, body: object) => {
+    const res = await fetch(path, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ licenseKey, ...body }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "發生錯誤");
+    return data;
+  };
+
   const handleGenerate = async () => {
-    if (!brand.apiKey) { setError("請先填寫 Anthropic API Key"); setShowBrand(true); return; }
     if (!item.name.trim()) { setError("請填寫品項名稱"); return; }
     setLoading(true); setError("");
     setCopies([]); setImageUrl(""); setSocial(null); setTranslations(null);
-    try {
-      const res = await fetch("/api/generate", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: brand.apiKey, brand, item }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "生成失敗");
-      setCopies(data.copies);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "生成失敗，請稍後再試");
-    } finally { setLoading(false); }
+    try { const d = await callApi("/api/generate", { brand, item }); setCopies(d.copies); }
+    catch (e: unknown) { setError(e instanceof Error ? e.message : "生成失敗"); }
+    finally { setLoading(false); }
   };
 
   const handleGenerateImage = async () => {
-    if (!brand.openaiKey) { setImageError("請先填寫 OpenAI API Key"); setShowBrand(true); return; }
     setImageLoading(true); setImageError(""); setImageUrl("");
-    try {
-      const res = await fetch("/api/image", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ openaiKey: brand.openaiKey, brand, item }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "圖片生成失敗");
-      setImageUrl(data.url);
-    } catch (e: unknown) {
-      setImageError(e instanceof Error ? e.message : "圖片生成失敗");
-    } finally { setImageLoading(false); }
+    try { const d = await callApi("/api/image", { brand, item }); setImageUrl(d.url); }
+    catch (e: unknown) { setImageError(e instanceof Error ? e.message : "圖片生成失敗"); }
+    finally { setImageLoading(false); }
   };
 
   const handleGenerateSocial = async () => {
-    if (!brand.apiKey) { setSocialError("請先填寫 Anthropic API Key"); setShowBrand(true); return; }
     setSocialLoading(true); setSocialError(""); setSocial(null);
-    try {
-      const res = await fetch("/api/social", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: brand.apiKey, brand, item, copies }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "生成失敗");
-      setSocial(data);
-    } catch (e: unknown) {
-      setSocialError(e instanceof Error ? e.message : "貼文生成失敗");
-    } finally { setSocialLoading(false); }
+    try { const d = await callApi("/api/social", { brand, item, copies }); setSocial(d); }
+    catch (e: unknown) { setSocialError(e instanceof Error ? e.message : "貼文生成失敗"); }
+    finally { setSocialLoading(false); }
   };
 
   const handleTranslate = async () => {
-    if (!brand.apiKey) { setTranslateError("請先填寫 Anthropic API Key"); setShowBrand(true); return; }
     setTranslateLoading(true); setTranslateError(""); setTranslations(null);
-    try {
-      const res = await fetch("/api/translate", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: brand.apiKey, item, copies }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "翻譯失敗");
-      setTranslations(data.translations);
-    } catch (e: unknown) {
-      setTranslateError(e instanceof Error ? e.message : "翻譯失敗");
-    } finally { setTranslateLoading(false); }
+    try { const d = await callApi("/api/translate", { item, copies }); setTranslations(d.translations); }
+    catch (e: unknown) { setTranslateError(e instanceof Error ? e.message : "翻譯失敗"); }
+    finally { setTranslateLoading(false); }
   };
 
   const handleDownloadPdf = async () => {
@@ -160,15 +140,12 @@ export default function Home() {
       const imgData = canvas.toDataURL("image/png");
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
       const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
       const imgW = pageW - 20;
       const imgH = (canvas.height * imgW) / canvas.width;
-      const finalH = Math.min(imgH, pageH - 20);
-      pdf.addImage(imgData, "PNG", 10, 10, imgW, finalH);
+      pdf.addImage(imgData, "PNG", 10, 10, imgW, Math.min(imgH, pdf.internal.pageSize.getHeight() - 20));
       pdf.save(`${item.name || "菜單"}-menu.pdf`);
-    } catch (e) {
-      console.error(e);
-    } finally { setPdfLoading(false); }
+    } catch (e) { console.error(e); }
+    finally { setPdfLoading(false); }
   };
 
   const handleCopy = async (text: string, key: string) => {
@@ -179,6 +156,36 @@ export default function Home() {
 
   const inputCls = "w-full border border-stone-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-stone-300";
 
+  // ── 授權碼畫面 ──
+  if (!licenseKey) {
+    return (
+      <div className="min-h-screen bg-stone-50 flex items-center justify-center px-6">
+        <div className="bg-white rounded-2xl border border-stone-200 p-8 w-full max-w-sm space-y-6">
+          <div className="text-center space-y-1">
+            <h1 className="text-xl font-semibold text-stone-800">菜單文案生成器</h1>
+            <p className="text-sm text-stone-400">請輸入專屬授權碼以開始使用</p>
+          </div>
+          <div className="space-y-3">
+            <input
+              placeholder="輸入授權碼，例如 MENU-XXXX-XXXX"
+              value={licenseInput}
+              onChange={e => setLicenseInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleLicenseSubmit()}
+              className={inputCls}
+            />
+            {licenseError && <p className="text-sm text-red-500">{licenseError}</p>}
+            <button onClick={handleLicenseSubmit} disabled={licenseLoading}
+              className="w-full bg-stone-800 text-white rounded-lg py-2.5 text-sm font-medium hover:bg-stone-700 transition-colors disabled:opacity-50">
+              {licenseLoading ? "驗證中…" : "進入系統"}
+            </button>
+          </div>
+          <p className="text-xs text-stone-400 text-center">沒有授權碼？請聯絡服務提供商取得</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── 主畫面 ──
   return (
     <div className="min-h-screen bg-stone-50">
       <header className="bg-white border-b border-stone-200 px-6 py-4">
@@ -187,29 +194,24 @@ export default function Home() {
             <h1 className="text-xl font-semibold text-stone-800">菜單文案生成器</h1>
             <p className="text-sm text-stone-500 mt-0.5">文案・圖片・社群貼文・多語言・PDF，一站生成</p>
           </div>
-          <button onClick={() => setShowBrand(v => !v)} className="text-sm text-stone-500 hover:text-stone-800 underline underline-offset-2">
-            {showBrand ? "收起設定" : "品牌設定"}
-          </button>
+          <div className="flex items-center gap-3">
+            <button onClick={() => setShowBrand(v => !v)} className="text-sm text-stone-500 hover:text-stone-800 underline underline-offset-2">
+              {showBrand ? "收起設定" : "品牌設定"}
+            </button>
+            <button onClick={handleLogout} className="text-xs text-stone-400 hover:text-stone-600 border border-stone-200 rounded-md px-2.5 py-1.5">
+              登出
+            </button>
+          </div>
         </div>
       </header>
 
       <main className="max-w-2xl mx-auto px-6 py-8 space-y-6">
 
-        {/* Brand Settings */}
+        {/* 品牌設定 */}
         {showBrand && (
           <section className="bg-white rounded-2xl border border-stone-200 p-6 space-y-4">
             <h2 className="font-medium text-stone-700">品牌設定</h2>
-            <p className="text-xs text-stone-400">儲存後自動套用於所有生成功能</p>
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-stone-600">Anthropic API Key <span className="text-red-400">*</span></label>
-              <input type="password" placeholder="sk-ant-..." value={brand.apiKey} onChange={e => setBrand({ ...brand, apiKey: e.target.value })} className={inputCls} />
-              <p className="text-xs text-stone-400">文案、社群貼文、多語言翻譯用（<a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer" className="underline">console.anthropic.com</a>）</p>
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-stone-600">OpenAI API Key <span className="text-stone-400 font-normal">（食物圖片生成用）</span></label>
-              <input type="password" placeholder="sk-..." value={brand.openaiKey} onChange={e => setBrand({ ...brand, openaiKey: e.target.value })} className={inputCls} />
-              <p className="text-xs text-stone-400">DALL-E 3 圖片生成，不需要圖片功能可留空（<a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="underline">platform.openai.com</a>）</p>
-            </div>
+            <p className="text-xs text-stone-400">設定完成後儲存，之後生成文案時會自動套用</p>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1"><label className="text-sm font-medium text-stone-600">店名</label><input placeholder="例：小島珈琲" value={brand.storeName} onChange={e => setBrand({ ...brand, storeName: e.target.value })} className={inputCls} /></div>
               <div className="space-y-1"><label className="text-sm font-medium text-stone-600">餐飲類型</label><input placeholder="例：文青咖啡廳" value={brand.type} onChange={e => setBrand({ ...brand, type: e.target.value })} className={inputCls} /></div>
@@ -221,13 +223,13 @@ export default function Home() {
             <div className="space-y-1"><label className="text-sm font-medium text-stone-600">禁止出現的字眼或風格</label><input placeholder="例：不要網路流行語、不要誇張形容詞" value={brand.forbidden} onChange={e => setBrand({ ...brand, forbidden: e.target.value })} className={inputCls} /></div>
             <div className="space-y-1">
               <label className="text-sm font-medium text-stone-600">過去文案範例（可留空）</label>
-              <textarea rows={3} placeholder={"例：\n1. 手沖衣索比亞，帶著花果香氣的每一口都是旅行。\n2. 慢燉三小時的牛肉湯，像媽媽的廚房。"} value={brand.examples} onChange={e => setBrand({ ...brand, examples: e.target.value })} className={`${inputCls} resize-none`} />
+              <textarea rows={3} placeholder={"例：\n1. 手沖衣索比亞，帶著花果香氣的每一口都是旅行。"} value={brand.examples} onChange={e => setBrand({ ...brand, examples: e.target.value })} className={`${inputCls} resize-none`} />
             </div>
             <button onClick={saveBrand} className="w-full bg-stone-800 text-white rounded-lg py-2.5 text-sm font-medium hover:bg-stone-700 transition-colors">儲存品牌設定</button>
           </section>
         )}
 
-        {/* Item Form */}
+        {/* 品項資訊 */}
         <section className="bg-white rounded-2xl border border-stone-200 p-6 space-y-4">
           <h2 className="font-medium text-stone-700">品項資訊</h2>
           <div className="space-y-1"><label className="text-sm font-medium text-stone-600">品項名稱 <span className="text-red-400">*</span></label><input placeholder="例：招牌紅燒牛肉麵" value={item.name} onChange={e => setItem({ ...item, name: e.target.value })} className={inputCls} /></div>
@@ -241,7 +243,7 @@ export default function Home() {
 
         {copies.length > 0 && (
           <>
-            {/* Menu Copy */}
+            {/* 文案結果 */}
             <section className="space-y-3">
               <h2 className="font-medium text-stone-700 px-1">菜單文案</h2>
               {copies.map((copy, idx) => (
@@ -258,7 +260,7 @@ export default function Home() {
               </button>
             </section>
 
-            {/* Image */}
+            {/* 食物圖片 */}
             <section className="bg-white rounded-2xl border border-stone-200 p-6 space-y-4">
               <div className="flex items-center justify-between">
                 <div><h2 className="font-medium text-stone-700">食物圖片生成</h2><p className="text-xs text-stone-400 mt-0.5">DALL-E 3 專業食物攝影風格</p></div>
@@ -281,14 +283,14 @@ export default function Home() {
                     <Image src={imageUrl} alt={item.name} fill className="object-cover" unoptimized />
                   </div>
                   <div className="flex gap-2">
-                    <a href={imageUrl} download={`${item.name}.png`} target="_blank" rel="noopener noreferrer" className="flex-1 border border-stone-300 text-stone-600 rounded-lg py-2 text-sm font-medium hover:bg-stone-100 transition-colors text-center">下載圖片</a>
+                    <a href={imageUrl} target="_blank" rel="noopener noreferrer" className="flex-1 border border-stone-300 text-stone-600 rounded-lg py-2 text-sm font-medium hover:bg-stone-100 transition-colors text-center">下載圖片</a>
                     <button onClick={handleGenerateImage} disabled={imageLoading} className="flex-1 border border-stone-300 text-stone-600 rounded-lg py-2 text-sm font-medium hover:bg-stone-100 transition-colors disabled:opacity-50">↺ 重新生成</button>
                   </div>
                 </div>
               )}
             </section>
 
-            {/* Social Posts */}
+            {/* 社群貼文 */}
             <section className="bg-white rounded-2xl border border-stone-200 p-6 space-y-4">
               <div className="flex items-center justify-between">
                 <div><h2 className="font-medium text-stone-700">社群貼文生成</h2><p className="text-xs text-stone-400 mt-0.5">Instagram 與 Facebook 貼文</p></div>
@@ -314,10 +316,10 @@ export default function Home() {
               )}
             </section>
 
-            {/* Multi-language */}
+            {/* 多語言 */}
             <section className="bg-white rounded-2xl border border-stone-200 p-6 space-y-4">
               <div className="flex items-center justify-between">
-                <div><h2 className="font-medium text-stone-700">多語言菜單</h2><p className="text-xs text-stone-400 mt-0.5">英文・日文・韓文・泰文，觀光客直接看</p></div>
+                <div><h2 className="font-medium text-stone-700">多語言菜單</h2><p className="text-xs text-stone-400 mt-0.5">英文・日文・韓文・泰文</p></div>
                 <button onClick={handleTranslate} disabled={translateLoading} className="bg-teal-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-teal-500 transition-colors disabled:opacity-50 shrink-0">
                   {translateLoading ? "翻譯中…" : "✦ 生成多語言"}
                 </button>
@@ -339,8 +341,7 @@ export default function Home() {
                         {translations[activeLang]!.price && <span className="text-xs text-stone-500 bg-stone-200 px-2 py-0.5 rounded-full">{translations[activeLang]!.price}</span>}
                       </div>
                       <p className="text-sm text-stone-600 leading-relaxed">{translations[activeLang]!.description}</p>
-                      <button onClick={() => handleCopy(`${translations[activeLang]!.name}\n${translations[activeLang]!.description}${translations[activeLang]!.price ? `\n${translations[activeLang]!.price}` : ""}`, `lang-${activeLang}`)}
-                        className="text-xs text-stone-400 hover:text-stone-700 border border-stone-200 rounded-md px-2.5 py-1.5 bg-white transition-colors">
+                      <button onClick={() => handleCopy(`${translations[activeLang]!.name}\n${translations[activeLang]!.description}${translations[activeLang]!.price ? `\n${translations[activeLang]!.price}` : ""}`, `lang-${activeLang}`)} className="text-xs text-stone-400 hover:text-stone-700 border border-stone-200 rounded-md px-2.5 py-1.5 bg-white transition-colors">
                         {copied === `lang-${activeLang}` ? "已複製 ✓" : "複製此語言"}
                       </button>
                     </div>
@@ -349,7 +350,7 @@ export default function Home() {
               )}
             </section>
 
-            {/* PDF Download */}
+            {/* PDF */}
             <section className="bg-white rounded-2xl border border-stone-200 p-6 space-y-4">
               <div className="flex items-center justify-between">
                 <div><h2 className="font-medium text-stone-700">匯出菜單 PDF</h2><p className="text-xs text-stone-400 mt-0.5">整合所有內容，直接列印或傳給客人</p></div>
@@ -357,8 +358,6 @@ export default function Home() {
                   {pdfLoading ? "產生中…" : "↓ 下載 PDF"}
                 </button>
               </div>
-
-              {/* PDF Preview Area */}
               <div ref={pdfRef} style={{ fontFamily: "sans-serif", background: "#fff", padding: "32px", borderRadius: "8px", border: "1px solid #e7e5e4" }}>
                 {brand.storeName && <p style={{ fontSize: "11px", color: "#78716c", marginBottom: "4px", letterSpacing: "0.1em", textTransform: "uppercase" }}>{brand.storeName}</p>}
                 <h3 style={{ fontSize: "22px", fontWeight: 700, color: "#1c1917", margin: "0 0 4px" }}>{item.name}</h3>
@@ -366,12 +365,10 @@ export default function Home() {
                 <div style={{ height: "1px", background: "#e7e5e4", margin: "12px 0" }} />
                 {copies[0] && <p style={{ fontSize: "14px", color: "#44403c", lineHeight: 1.8, margin: "0 0 16px" }}>{copies[0]}</p>}
                 {imageUrl && (
-                  <div style={{ margin: "16px 0" }}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={imageUrl} alt={item.name} style={{ width: "100%", maxHeight: "300px", objectFit: "cover", borderRadius: "8px" }} crossOrigin="anonymous" />
-                  </div>
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={imageUrl} alt={item.name} style={{ width: "100%", maxHeight: "300px", objectFit: "cover", borderRadius: "8px", margin: "16px 0" }} crossOrigin="anonymous" />
                 )}
-                {translations && translations.en && (
+                {translations?.en && (
                   <div style={{ marginTop: "16px", padding: "12px", background: "#fafaf9", borderRadius: "6px" }}>
                     <p style={{ fontSize: "11px", color: "#a8a29e", margin: "0 0 4px" }}>English</p>
                     <p style={{ fontSize: "13px", fontWeight: 600, color: "#1c1917", margin: "0 0 4px" }}>{translations.en.name}</p>
@@ -385,7 +382,7 @@ export default function Home() {
                   </div>
                 )}
               </div>
-              <p className="text-xs text-stone-400">預覽會包含已生成的圖片和英文翻譯（如果有的話）</p>
+              <p className="text-xs text-stone-400">預覽包含已生成的圖片和英文翻譯（如果有的話）</p>
             </section>
           </>
         )}

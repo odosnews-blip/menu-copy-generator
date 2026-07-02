@@ -1,18 +1,16 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth";
 
 export async function POST(req: NextRequest) {
   try {
-    const { apiKey, brand, item } = await req.json();
+    const { licenseKey, brand, item } = await req.json();
 
-    if (!apiKey) {
-      return NextResponse.json({ error: "請填寫 Anthropic API Key" }, { status: 400 });
-    }
-    if (!item.name) {
-      return NextResponse.json({ error: "請填寫品項名稱" }, { status: 400 });
-    }
+    const authError = requireAuth(licenseKey);
+    if (authError) return NextResponse.json({ error: authError }, { status: 401 });
+    if (!item.name) return NextResponse.json({ error: "請填寫品項名稱" }, { status: 400 });
 
-    const client = new Anthropic({ apiKey });
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const systemPrompt = `你是一位專業的餐飲文案撰寫師，擅長寫出吸引人又有質感的菜單描述文字。
 ${brand.storeName ? `店名：${brand.storeName}` : ""}
@@ -38,22 +36,13 @@ ${item.price ? `價格：${item.price} 元` : ""}`;
     });
 
     const content = message.content[0];
-    if (content.type !== "text") {
-      throw new Error("Unexpected response type");
-    }
-
+    if (content.type !== "text") throw new Error("Unexpected response type");
     const jsonMatch = content.text.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) {
-      throw new Error("無法解析回應格式");
-    }
-
+    if (!jsonMatch) throw new Error("無法解析回應格式");
     const copies: string[] = JSON.parse(jsonMatch[0]);
     return NextResponse.json({ copies });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "未知錯誤";
-    if (message.includes("401") || message.includes("authentication")) {
-      return NextResponse.json({ error: "API Key 無效，請確認後重試" }, { status: 401 });
-    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
