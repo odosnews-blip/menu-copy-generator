@@ -26,6 +26,10 @@ body {
 }
 
 ::placeholder {
-  color: #57534e;
+  color: #a8a29e;
   opacity: 1;
+}
+
+input, textarea, select {
+  color: #1c1917;
 }
